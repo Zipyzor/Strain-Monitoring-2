@@ -1,0 +1,164 @@
+import os
+import time
+import http.client
+import struct
+from dotenv import load_dotenv
+from datetime import datetime
+import pytz
+
+# Load environment variables
+load_dotenv()
+
+# SensorCloud authentication details
+DEVICE_ID = os.getenv("DEVICE_ID")
+AUTH_KEY = os.getenv("AUTH_KEY")
+
+# Sensor and renamed channels
+SENSOR_NAME = "44936"
+CHANNELS = {
+    "ch1": "NCR Axial",
+    "ch2": "NCR Bending",
+    "ch3": "Control Axial"
+}
+
+# API Authentication Server
+AUTH_SERVER = "sensorcloud.microstrain.com"
+PACIFIC_TZ = pytz.timezone("America/Los_Angeles")
+
+
+def authenticate_key(device_id, key):
+    """Authenticate with SensorCloud and get the server and auth_token for API requests."""
+    conn = http.client.HTTPSConnection(AUTH_SERVER)
+    headers = {"Accept": "application/xdr"}
+    url = f"/SensorCloud/devices/{device_id}/authenticate/?version=1&key={key}"
+
+    conn.request('GET', url=url, headers=headers)
+    response = conn.getresponse()
+
+    if response.status == http.client.OK:
+        data = response.read()
+
+        if len(data) < 8:
+            return None, None  # Invalid response
+
+        # Extract auth token length and value
+        auth_token_length = struct.unpack("!I", data[:4])[0]
+        auth_token = data[4:4 + auth_token_length].decode('utf-8').strip('\x00')
+
+        # Find correct server offset dynamically
+        server_offset = 4 + auth_token_length  
+        while server_offset < len(data) - 4:
+            server_length = struct.unpack("!I", data[server_offset:server_offset + 4])[0]
+            if 1 <= server_length <= 100:  # Ensure valid length
+                break
+            server_offset += 1  
+
+        # Extract server name
+        server = data[server_offset + 4:server_offset + 4 + server_length].decode('utf-8').strip('\x00')
+
+        return server, auth_token
+    else:
+        return None, None  # Authentication failed
+
+
+def format_timestamp(nanoseconds):
+    """Convert nanoseconds timestamp to Pacific Time in 12-hour AM/PM format."""
+    timestamp_seconds = nanoseconds / 1e9
+    utc_time = datetime.utcfromtimestamp(timestamp_seconds).replace(tzinfo=pytz.utc)
+    return utc_time.astimezone(PACIFIC_TZ).strftime('%m/%d/%Y %I:%M:%S %p')
+
+
+def download_data_range(server, auth_token, device_id, sensor_name, channel_name, start_time_ns, end_time_ns):
+    """Download all data for a given sensor channel within a specific time range."""
+    conn = http.client.HTTPSConnection(server)
+    url = f"/SensorCloud/devices/{device_id}/sensors/{sensor_name}/channels/{channel_name}/streams/timeseries/data/"
+    url += f"?version=1&auth_token={auth_token}&starttime={start_time_ns}&endtime={end_time_ns}"
+    headers = {"Accept": "application/xdr"}
+
+    conn.request("GET", url=url, headers=headers)
+    response = conn.getresponse()
+
+    if response.status == http.client.OK:
+        data = response.read()
+        data_points = []
+
+        while data:
+            timestamp = struct.unpack_from("!Q", data, 0)[0]
+            value = struct.unpack_from("!f", data, 8)[0]
+            data_points.append((timestamp, value))
+            data = data[12:]  # Move to next entry
+
+        return data_points
+    return []  # Return empty list if no data
+
+
+def get_peak_values(server, auth_token):
+    """Fetch the last 2 minutes of data for each channel and find the peak value."""
+    now_ns = int(time.time() * 1e9)
+    start_ns = now_ns - int(2 * 60 * 1e9)
+
+    peak_values = {}
+    for channel in CHANNELS:
+        data = download_data_range(server, auth_token, DEVICE_ID, SENSOR_NAME, channel, start_ns, now_ns)
+        peak_values[channel] = max((value for _, value in data), default=None)
+
+    return peak_values
+
+
+def calculate_peak_difference(server, auth_token):
+    """Calculate the peak (NCR Axial - Control Axial) difference across all timestamps over the last 2 minutes."""
+    now_ns = int(time.time() * 1e9)
+    start_ns = now_ns - int(2 * 60 * 1e9)
+
+    ch1_data = download_data_range(server, auth_token, DEVICE_ID, SENSOR_NAME, "ch1", start_ns, now_ns)
+    ch3_data = download_data_range(server, auth_token, DEVICE_ID, SENSOR_NAME, "ch3", start_ns, now_ns)
+
+    if ch1_data and ch3_data:
+        ch1_dict = {ts: val for ts, val in ch1_data}
+        ch3_dict = {ts: val for ts, val in ch3_data}
+        common_timestamps = sorted(set(ch1_dict.keys()) & set(ch3_dict.keys()))
+
+        if common_timestamps:
+            deltas = [ch1_dict[ts] - ch3_dict[ts] for ts in common_timestamps]
+            return max(deltas, default=None)
+    return None  # No valid differences found
+
+
+def main():
+    """Main function to authenticate and fetch live strain data every 2 minutes."""
+    server, auth_token = authenticate_key(DEVICE_ID, AUTH_KEY)
+    if not server or not auth_token:
+        print("Exiting due to authentication failure.")
+        return
+
+    try:
+        while True:
+            print("\nFetching live data...")
+
+            now_ns = int(time.time() * 1e9)
+            start_ns = now_ns - int(2 * 60 * 1e9)
+
+            for channel, name in CHANNELS.items():
+                data = download_data_range(server, auth_token, DEVICE_ID, SENSOR_NAME, channel, start_ns, now_ns)
+
+                latest_value = data[-1][1] if data else None
+                print(f"{name}: {latest_value if latest_value is not None else 'No data available'}")
+
+            print("\nAnalyzing last 2 minutes of data...")
+            peak_values = get_peak_values(server, auth_token)
+            for channel, name in CHANNELS.items():
+                peak = peak_values[channel]
+                print(f"Peak Value for {name} (last 2 min): {peak if peak is not None else 'No data'}")
+
+            peak_difference = calculate_peak_difference(server, auth_token)
+            print(f"Peak (NCR Axial - Control Axial) Difference (last 2 min): {peak_difference if peak_difference is not None else 'No data'}")
+
+            print("\nWaiting for next data update (2 minutes)...")
+            time.sleep(120)
+
+    except KeyboardInterrupt:
+        print("\nStopping live data retrieval.")
+
+
+if __name__ == "__main__":
+    main()
