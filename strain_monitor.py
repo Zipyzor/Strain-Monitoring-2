@@ -106,22 +106,55 @@ def get_peak_values(server, auth_token):
 
 
 def calculate_peak_difference(server, auth_token):
-    """Calculate the peak (NCR Axial - Control Axial) difference across all timestamps over the last 2 minutes."""
+    """Calculate the peak (NCR Axial - Control Axial) difference over the last 2 minutes, allowing closest matches."""
     now_ns = int(time.time() * 1e9)
     start_ns = now_ns - int(2 * 60 * 1e9)
 
     ch1_data = download_data_range(server, auth_token, DEVICE_ID, SENSOR_NAME, "ch1", start_ns, now_ns)
     ch3_data = download_data_range(server, auth_token, DEVICE_ID, SENSOR_NAME, "ch3", start_ns, now_ns)
 
-    if ch1_data and ch3_data:
-        ch1_dict = {ts: val for ts, val in ch1_data}
-        ch3_dict = {ts: val for ts, val in ch3_data}
-        common_timestamps = sorted(set(ch1_dict.keys()) & set(ch3_dict.keys()))
+    if not ch1_data:
+        print("⚠️ Warning: No recent data for NCR Axial (ch1)")
+        return None
+    if not ch3_data:
+        print("⚠️ Warning: No recent data for Control Axial (ch3)")
+        return None
 
-        if common_timestamps:
-            deltas = [ch1_dict[ts] - ch3_dict[ts] for ts in common_timestamps]
-            return max(deltas, default=None)
-    return None  # No valid differences found
+    # Convert lists to dictionaries for fast lookup
+    ch1_dict = {ts: val for ts, val in ch1_data}
+    ch3_dict = {ts: val for ts, val in ch3_data}
+
+    # Get all timestamps sorted
+    ch1_timestamps = sorted(ch1_dict.keys())
+    ch3_timestamps = sorted(ch3_dict.keys())
+
+    # Match timestamps as closely as possible
+    matched_differences = []
+    ch3_index = 0
+    mismatch_reports = []  # Store time mismatches
+
+    for ts in ch1_timestamps:
+        # Move ch3_index forward until we find the closest match
+        while ch3_index < len(ch3_timestamps) - 1 and abs(ch3_timestamps[ch3_index + 1] - ts) < abs(ch3_timestamps[ch3_index] - ts):
+            ch3_index += 1
+
+        closest_ts = ch3_timestamps[ch3_index]
+        time_diff_sec = abs(closest_ts - ts) / 1e9  # Convert nanoseconds to seconds
+
+        if time_diff_sec > 0:  # Only report mismatches
+            mismatch_reports.append(f"⏳ Time mismatch: {time_diff_sec:.3f} sec between NCR Axial ({ts}) and Control Axial ({closest_ts})")
+
+        if time_diff_sec <= 1.0:  # Allow up to 1 second mismatch
+            matched_differences.append(ch1_dict[ts] - ch3_dict[closest_ts])
+
+    # Print mismatches only if they exist
+    if mismatch_reports:
+        print("\n".join(mismatch_reports))
+
+    # Return peak difference
+    return max(matched_differences, default=None)
+
+
 
 
 def main():
