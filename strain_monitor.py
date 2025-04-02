@@ -5,6 +5,8 @@ import struct
 from dotenv import load_dotenv
 from datetime import datetime
 import pytz
+import smtplib
+from email.message import EmailMessage
 
 # Load environment variables
 load_dotenv()
@@ -155,6 +157,24 @@ def calculate_peak_difference(server, auth_token):
     return max(matched_differences, default=None)
 
 
+def send_email_alert(value):
+    print("📧 Preparing to send email alert...")
+    msg = EmailMessage()
+    msg["Subject"] = "🚨 Strain Monitor Alert: Strain Difference Exceeded"
+    msg["From"] = os.getenv("EMAIL_SENDER")
+    msg["To"] = os.getenv("EMAIL_RECIPIENTS")
+    msg.set_content(f"The peak strain difference exceeded the threshold for NCR1588719800.\n\nValue: {value:.2f}")
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
+            smtp.starttls()
+            smtp.login(msg["From"], os.getenv("EMAIL_PASSWORD"))
+            smtp.send_message(msg)
+            print("✅ Email alert sent.")
+    except Exception as e:
+        print(f"❌ Failed to send email alert: {e}")
+
+
 
 
 def main():
@@ -163,6 +183,9 @@ def main():
     if not server or not auth_token:
         print("Exiting due to authentication failure.")
         return
+
+    THRESHOLD = 25.0  # Add your peak threshold here
+    alert_sent = False  # Flag to avoid spamming email
 
     try:
         while True:
@@ -173,7 +196,6 @@ def main():
 
             for channel, name in CHANNELS.items():
                 data = download_data_range(server, auth_token, DEVICE_ID, SENSOR_NAME, channel, start_ns, now_ns)
-
                 latest_value = data[-1][1] if data else None
                 print(f"{name}: {latest_value if latest_value is not None else 'No data available'}")
 
@@ -184,7 +206,20 @@ def main():
                 print(f"Peak Value for {name} (last 2 min): {peak if peak is not None else 'No data'}")
 
             peak_difference = calculate_peak_difference(server, auth_token)
-            print(f"Peak (NCR Axial - Control Axial) Difference (last 2 min): {peak_difference if peak_difference is not None else 'No data'}")
+
+            if peak_difference is not None:
+                abs_diff = abs(peak_difference)
+                print(f"Peak (NCR Axial - Control Axial) Difference (last 2 min): {peak_difference:.2f}")
+                if abs_diff > THRESHOLD:
+                    print(f"🚨 Threshold breached! Absolute difference = {abs_diff:.2f} (Threshold = {THRESHOLD})")
+                    print(f"🔍 alert_sent is {alert_sent}")
+                    if not alert_sent:
+                        send_email_alert(peak_difference)
+                        alert_sent = True
+                else:
+                    print(f"✅ Difference within threshold. (Max = {abs_diff:.2f})")
+            else:
+                print("Peak (NCR Axial - Control Axial) Difference (last 2 min): No data")
 
             print("\nWaiting for next data update (2 minutes)...")
             time.sleep(120)
