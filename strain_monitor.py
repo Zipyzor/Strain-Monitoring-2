@@ -163,7 +163,7 @@ def send_email_alert(value):
     msg["Subject"] = "🚨 Strain Monitor Alert: Strain Difference Exceeded"
     msg["From"] = os.getenv("EMAIL_SENDER")
     msg["To"] = os.getenv("EMAIL_RECIPIENTS")
-    msg.set_content(f"The peak strain difference exceeded the threshold for NCR1588719800.\n\nValue: {value:.2f}")
+    msg.set_content(f"THIS IS A TEST OF THE EMERGENCY BROADCAST SYSTEM: The peak strain difference exceeded the threshold for NCR1588719800.\n\nValue: {value:.2f}")
 
     try:
         with smtplib.SMTP("smtp.gmail.com", 587) as smtp:
@@ -184,7 +184,7 @@ def main():
         print("Exiting due to authentication failure.")
         return
 
-    THRESHOLD = 25.0  # Add your peak threshold here
+    THRESHOLD = 274  # Add peak threshold here
     alert_sent = False  # Flag to avoid spamming email
 
     try:
