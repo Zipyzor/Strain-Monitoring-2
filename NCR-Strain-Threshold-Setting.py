@@ -2,9 +2,9 @@ import pandas as pd
 import os
 
 # ==== File paths ====
-microstrain_path = "converted_min_tube_strain_margin_to_max_microstrain_at_dll.csv"
-controls_path = "NCR-Control-Elements.csv"
-report_path = "ncr_max_control_vs_noncontrol_differences_with_maxes.csv"
+microstrain_path = "data/LL5.3.3_DLL_axial_strain_only.csv"
+controls_path = "data/NCR-Control-Elements.csv"
+report_path = "data/ncr_max_control_vs_noncontrol_differences_with_maxes.csv"
 
 # ==== Load CSVs ====
 df_microstrain = pd.read_csv(microstrain_path)
@@ -15,6 +15,9 @@ df_controls = pd.read_csv(controls_path)
 df_microstrain.rename(columns={df_microstrain.columns[0]: "Element ID"}, inplace=True)
 df_microstrain["Element ID"] = df_microstrain["Element ID"].astype(str)
 df_controls["Element ID"] = df_controls["Element ID"].astype(str)
+
+# Convert strain to microstrain starting from column F (index 5)
+df_microstrain.iloc[:, 5:] *= 1_000_000
 
 # Prepare output rows
 report = []
@@ -35,8 +38,8 @@ for ncr, group in df_controls.groupby("NCR"):
         continue
 
     # Transpose for subcase-wise comparison
-    df_ctrl_t = df_ctrl.T
-    df_nonctrl_t = df_nonctrl.T
+    df_ctrl_t = df_ctrl.iloc[:, 4:].T
+    df_nonctrl_t = df_nonctrl.iloc[:, 4:].T
 
     max_diff = 0
     max_subcase = None
@@ -59,8 +62,8 @@ for ncr, group in df_controls.groupby("NCR"):
 
     # Get max strain and corresponding subcase for both elements across all subcases
     if max_subcase:
-        ctrl_all_subcases = df_ctrl.loc[max_pair[0]].dropna()
-        nonctrl_all_subcases = df_nonctrl.loc[max_pair[1]].dropna()
+        ctrl_all_subcases = df_ctrl.loc[max_pair[0]].iloc[4:].dropna()
+        nonctrl_all_subcases = df_nonctrl.loc[max_pair[1]].iloc[4:].dropna()
 
         ctrl_max_strain = ctrl_all_subcases.max()
         ctrl_max_subcase = ctrl_all_subcases.idxmax()
@@ -86,4 +89,4 @@ for ncr, group in df_controls.groupby("NCR"):
 df_report = pd.DataFrame(report)
 df_report.to_csv(report_path, index=False)
 
-print(f"✅ Report saved as {report_path}")
+print(f"\u2705 Report saved as {report_path}")

@@ -33,11 +33,6 @@ max_divergence = 0
 loop_gap_count = 0
 previous_timestamps = None
 
-EXPECTED_HZ = 32
-EXPECTED_WINDOW_SECONDS = 120
-EXPECTED_SAMPLE_COUNT = EXPECTED_HZ * EXPECTED_WINDOW_SECONDS
-
-
 def authenticate_key(device_id, key):
     conn = http.client.HTTPSConnection(AUTH_SERVER)
     headers = {"Accept": "application/xdr"}
@@ -134,7 +129,7 @@ def main():
         print("Exiting due to authentication failure.")
         return
 
-    THRESHOLD = 274
+    THRESHOLD = 119
     alert_sent = False
 
     try:
