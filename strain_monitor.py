@@ -16,7 +16,7 @@ DEVICE_ID = os.getenv("DEVICE_ID")
 AUTH_KEY = os.getenv("AUTH_KEY")
 
 # Sensor and renamed channels
-SENSOR_NAME = "44936"
+SENSOR_NAME = "50009"
 CHANNELS = {
     "ch1": "NCR Axial",
     "ch2": "NCR Bending",
